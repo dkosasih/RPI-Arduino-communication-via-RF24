@@ -3,6 +3,7 @@
 */
 
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -43,22 +44,21 @@ role_e;
 // The role of the current running sketch
 role_e role;
 
-const int min_payload_size = 4;
-const int max_payload_size = 32;
-const int payload_size_increments_by = 1;
-int next_payload_size = min_payload_size;
+const int maxPayloadSize = 350;
+const int chunkCapacity = 30;
+const char *packetSizeCode = "packet-size";
 
-char receive_payload[max_payload_size+1]; // +1 to allow room for a terminating NULL char
+char receive_payload[maxPayloadSize + 1]; // +1 to allow room for a terminating NULL char
 
 void initialize(){
 	string line;
 	char *parsed;
-	char theMessage[32]="";
+	char theMessage[maxPayloadSize]="";
 	const char *delim = "||";
 	
 	int i = 0;
 	
-	ifstream ifile("RF24Hub.config");
+	ifstream ifile("rpi-hub.config");
 	if(ifile){
 		if(ifile.is_open())
 		{
@@ -141,10 +141,85 @@ void makeCurlReq(string itemID, string message){
     curl_global_cleanup();
 }
 
+void splitAndSend(char *msg, const int arraySize, const int len)
+{
+  printf("Array size: %i\n\r", arraySize);
+  int numPackets = ((int)arraySize / len);
+  int P_iterator = 0;
+
+  printf("num_Packets: %i\n\r", numPackets);
+
+  while (P_iterator <= numPackets)
+  {
+	if(numPackets >  0 && P_iterator == 0) {
+		char numstr[21];
+		sprintf(numstr, ":%i", (numPackets + 1));
+		string pkg = string(packetSizeCode) + numstr;
+		printf("%s\n\r", pkg.c_str());
+		radio.write(pkg.c_str(), pkg.length());
+	}
+
+	char t[len + 1];
+    char *ptr1 = msg + P_iterator * (len);
+    strncpy(t, ptr1, len);
+
+    t[len] = '\0';
+    printf("%s\n\r", t);
+    radio.write(&t, sizeof(t));
+    P_iterator++;
+  }
+}
+
+string getPayload(){
+  // Dump the payloads until we've gotten everything
+  uint8_t len;
+  
+  //[maxPayloadSize + 1];
+  string finalMessage;
+  unsigned long started_waiting_at = millis();
+
+  uint8_t radioIterator = 0;
+  uint8_t packetCount = 1;
+
+  while (radio.available() || radioIterator < packetCount)
+  {
+    char receive_payload[50];
+    if(radio.available()) {
+      // Fetch the payload, and see if this was the last one.
+      len = radio.getDynamicPayloadSize();
+      radio.read(receive_payload, len);
+       // Spew it
+      printf("Got payload size=%i value=%s\n\r", len, receive_payload);
+    }
+
+    if (millis() - started_waiting_at > 2500) {
+      radioIterator = packetCount;
+      printf("timeout; payload is now: %s\n\r", receive_payload);
+    }
+
+    // sender is sending packet size information
+    if(radioIterator == 0 && 
+      strncmp(receive_payload, packetSizeCode, sizeof(packetSizeCode)) == 0) {
+        strtok(receive_payload, ":");
+        packetCount = atoi(strtok(NULL, ":"));
+        printf("number of packets changed to: %i\n\r", packetCount);
+
+        radioIterator++;
+    }
+
+    // only concatenate string when packet count is still as the sender says
+    if(strncmp(receive_payload, packetSizeCode, sizeof(packetSizeCode)) != 0) {
+      finalMessage.append(receive_payload);
+
+      radioIterator++;
+    }
+  }
+  printf("no more data\n\r");
+
+  return finalMessage;
+}
+
 int main(int argc, char** argv){
-
-	uint8_t len;
-
 	// Refer to RF24.h or nRF24L01 DS for settings
 	radio.begin();
 	radio.enableDynamicPayloads();
@@ -172,7 +247,6 @@ int main(int argc, char** argv){
 
 	role=role_receiver;
 
-    
     int talkingPipeIndex = 99;
     
     //
@@ -180,13 +254,11 @@ int main(int argc, char** argv){
 	while (1)
 	{
         fflush(stdout);
-        
-		char receivePayload[32];
+
 		string line;
 		char *parsed;
 		const char *delim = "||";
-		char theMessage[32]="";
-		char sendToNode[32] = "";
+		char sendToNode[maxPayloadSize] = "";
 		
 		ifstream ifile("outbox");
 		if(ifile){
@@ -202,8 +274,6 @@ int main(int argc, char** argv){
 					parsed = strtok(NULL, delim);
 					printf("Message: %s\n\r", parsed);
 				
-					strcpy(theMessage, parsed);
-                    strcat(theMessage,"\0");
 					role = role_sender;
 				}
 				ifile.close();
@@ -214,21 +284,19 @@ int main(int argc, char** argv){
 		if (role == role_sender)
 		{
 			talkingPipeIndex = findPipeIndex(sendToNode);
-            
-            if(talkingPipeIndex != 99){
-                // First, stop listening so we can talk.
+			printf("talkingpipe: %i", talkingPipeIndex);
+			if (talkingPipeIndex != 99)
+			{
+				// First, stop listening so we can talk.
                 radio.stopListening();
                 
                 radio.openWritingPipe(talking_pipes[talkingPipeIndex]);
-                
-                // Take the time, and send it.  This will block until complete
-                printf("Now sending length %i...\n\r",sizeof(theMessage));
-                radio.write( theMessage, sizeof(theMessage));
-                
-                delay(100);
+				printf("about to write\n\r");
 
-                theMessage[0] = 0;
-                
+				splitAndSend(parsed, strlen(parsed), chunkCapacity);
+
+				delay(100);
+
                 // Now, continue listening
                 radio.startListening();
                 
@@ -237,8 +305,8 @@ int main(int argc, char** argv){
                 // Wait here until we get a response, or timeout
                 unsigned long started_waiting_at = millis();
                 bool timeout = false;
-				uint8_t pipe_numAck=1;
-                while ( ! radio.available(&pipe_numAck) && !timeout){//&& ! timeout
+				uint8_t pipe_numAck = 1;
+                while (!radio.available(&pipe_numAck) && !timeout){
                    if (millis() - started_waiting_at > 2500 )
                         timeout = true;
                 }
@@ -264,39 +332,25 @@ int main(int argc, char** argv){
 					}
                 }
                 
-                // Update size for next time.
-                // next_payload_size += payload_size_increments_by;
-                // if ( next_payload_size > max_payload_size )
-                // next_payload_size = min_payload_size;
-                
-                // Try again 1s later
+                // Try again 1ms later
                 delay(100);
                 
                 role = role_receiver;
                 radio.startListening();
-            }
+			}
 		}
 
 		//
 		// Pong back role.  Receive each packet, dump it out, and send it back
 		//
-
+		//char receivePayload[maxPayloadSize];
 		if ( role == role_receiver )
 		{
 			// if there is data ready
 			uint8_t pipe_num=1;
 			if ( radio.available(&pipe_num) )
 			{
-				//bool done = false;
-				len = radio.getDynamicPayloadSize();
-				// while (!done)
-				// {
-					// Fetch the payload, and see if this was the last one.
-				radio.read( receivePayload, len );
-					//done=true;
-					// Spew it
-				printf("Got payload %s from node %i...\n\r", receivePayload,pipe_num);
-				//}
+				string payload = getPayload();
 				
 				// First, stop listening so we can talk
 				radio.stopListening();
@@ -308,11 +362,12 @@ int main(int argc, char** argv){
 				uint16_t pipe_id = talking_pipes[pipe_num-1] & 0xffff;
 
 				// Send the final one back.
-				radio.write( receivePayload, len);
+				char ok[3] = "OK";
+				radio.write(ok, 3);
 				printf("Sent response to %04x.\n\r",pipe_id);
 
                 //Making a local CURL call to OPENHAB
-				makeCurlReq(nodes[pipe_num-1], receivePayload);
+				makeCurlReq(nodes[pipe_num-1], payload);
 				
 				// Now, resume listening so we catch the next packets.
 				radio.startListening();
@@ -321,6 +376,3 @@ int main(int argc, char** argv){
 	}
 	return 0;
 }
-
-
-

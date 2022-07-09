@@ -10,7 +10,7 @@
 // Set up nRF24L01 radio on SPI bus plus pins 9 & 10
 
 RF24 radio(9,10);
-const short relayShort = 3;
+const short relayShort = 4;
 
 //
 // Topology
@@ -18,7 +18,7 @@ const short relayShort = 3;
 
 // Radio pipe addresses for the 2 nodes to communicate.
 const uint64_t pipes[2] = { 
-  0xF0F0F0F0D3LL, 0xF0F0F0F0C3LL };
+  0xF2F0F0F0D3LL, 0xF1F0F0F0C3LL };
 
 // The various roles supported by this sketch
 typedef enum { 
@@ -41,11 +41,11 @@ role_e role;
 SwitchStats switchStats;
 
 
-const int max_payload_size = 32;
-const int min_payload_size = 4;
-const int payload_size_increments_by = 2;
-int next_payload_size = min_payload_size;
-char receive_payload[max_payload_size+1]; // +1 to allow room for a terminating NULL char
+const int maxPayloadSize = 32;
+const int minPayloadSize = 4;
+const int payloadIncrementBy = 2;
+int nextPayloadSize = minPayloadSize;
+char receive_payload[maxPayloadSize+1]; // +1 to allow room for a terminating NULL char
 
 void setup(void)
 {
@@ -114,7 +114,7 @@ void loop(void)
     radio.stopListening();
 
     // Take the time, and send it.  This will block until complete
-    printf("Now sending length %i...",next_payload_size);
+    printf("Now sending length %i...",nextPayloadSize);
     radio.write( send_payload, sizeof(send_payload) );
 
     // Now, continue listening
@@ -146,9 +146,9 @@ void loop(void)
     }
 
     // Update size for next time.
-    next_payload_size += payload_size_increments_by;
-    if ( next_payload_size > max_payload_size )
-      next_payload_size = min_payload_size;
+    nextPayloadSize += payloadIncrementBy;
+    if ( nextPayloadSize > maxPayloadSize )
+      nextPayloadSize = minPayloadSize;
 
     // Try again 1s later
     delay(1000);
@@ -169,12 +169,11 @@ void loop(void)
     {
       // Dump the payloads until we've gotten everything
       uint8_t len;
-      bool done = false;
-      while (!done)
+      while (radio.available())
       {
         // Fetch the payload, and see if this was the last one.
         len = radio.getDynamicPayloadSize();
-        done = radio.read( receive_payload, len );
+        radio.read( receive_payload, len );
 
         // Put a zero at the end for easy printing
         receive_payload[len] = 0;
@@ -183,11 +182,11 @@ void loop(void)
         printf("Got payload size=%i value=%s\n\r",len,receive_payload);
       }
 
-      if(String(receive_payload)=="Switch_On" && switchStats == OFF){
+      if(String(receive_payload)=="green" && switchStats == OFF){
         digitalWrite(relayShort, HIGH);
         switchStats = ON;
       }
-      else if(String(receive_payload)=="Switch_Off" && switchStats == ON){
+      else if(String(receive_payload)=="off" && switchStats == ON){
         digitalWrite(relayShort,LOW);	
         switchStats = OFF;  
     }

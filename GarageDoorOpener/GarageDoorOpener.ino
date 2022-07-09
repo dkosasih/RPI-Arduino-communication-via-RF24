@@ -63,12 +63,12 @@ DoorStats doorStats;
 // Payload
 //
 
-const int min_payload_size = 4;
-const int max_payload_size = 32;
-const int payload_size_increments_by = 2;
-int next_payload_size = min_payload_size;
+const int minPayloadSize = 4;
+const int maxPayloadSize = 32;
+const int payloadIncrementBy = 2;
+int nextPayloadSize = minPayloadSize;
 
-char receive_payload[max_payload_size+1]; // +1 to allow room for a terminating NULL char
+char receive_payload[maxPayloadSize+1]; // +1 to allow room for a terminating NULL char
 
 void setup(void)
 {
@@ -213,7 +213,7 @@ void loop(void)
     radio.stopListening();
 
     // Take the time, and send it.  This will block until complete
-    printf("Now sending length %i...",next_payload_size);
+    printf("Now sending length %i...",nextPayloadSize);
     radio.write( send_payload, sizeof(send_payload) );
 
     // Now, continue listening
@@ -245,9 +245,9 @@ void loop(void)
     }
 
     // Update size for next time.
-    next_payload_size += payload_size_increments_by;
-    if ( next_payload_size > max_payload_size )
-      next_payload_size = min_payload_size;
+    nextPayloadSize += payloadIncrementBy;
+    if ( nextPayloadSize > maxPayloadSize )
+      nextPayloadSize = minPayloadSize;
 
     // Try again 1s later
     delay(1000);
@@ -268,12 +268,11 @@ void loop(void)
     {
       // Dump the payloads until we've gotten everything
       uint8_t len;
-      bool done = false;
-      while (!done)
+      while (radio.available())
       {
         // Fetch the payload, and see if this was the last one.
         len = radio.getDynamicPayloadSize();
-        done = radio.read( receive_payload, len );
+        radio.read( receive_payload, len );
 
         // Put a zero at the end for easy printing
         receive_payload[len] = 0;
