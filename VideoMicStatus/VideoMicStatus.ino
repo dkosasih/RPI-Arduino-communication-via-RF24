@@ -13,8 +13,8 @@
 
 RF24 radio(9, 10);
 const short red = 6;
-const short green = 5;
-const short blue = 3;
+const short blue = 5;
+const short green = 3;
 
 //
 // Topology
@@ -24,28 +24,36 @@ const short blue = 3;
 const uint64_t pipes[2] = {
     0xF2F0F0F0D3LL, 0xF1F0F0F0C3LL};
 
-// Door Status
 typedef enum
 {
-  NOMEETING = 0,
-  MIC = 1,
-  CAMERA = 2,
-  MICANDCAMERA = 3
-} SwitchStats;
+  OFF = 0,
+  SOLID = 1,
+  PULSE = 2,
+  HEARTBEAT = 3,
+  BLINK = 4
+} LightVariation;
+
+class Light {
+  public: 
+    int red;
+    int green;
+    int blue;
+    LightVariation variation;
+};
+
+// typedef struct DeviceStatus {
+//   Light noMeeting;
+//   Light mic;
+//   Light camera;
+// };
 
 // FriendlyName of the door state
 const char *switchStatsFriendlyName[] = {
     "No meeting\n", "Mic on\n", "Video on\n", "Video and mic on\n"};
 
 // Status of the door currently
-SwitchStats switchStats;
-
-const int maxPayloadSize = 255;
-const int minPayloadSize = 4;
-const int packageSize = 32;
-const int payloadIncrementBy = 2;
+// SwitchStats switchStats;
 const char *packetSizeCode = "packet-size";
-int nextPayloadSize = minPayloadSize;
 
 void setup(void)
 {
@@ -64,7 +72,7 @@ void setInitialState()
   analogWrite(blue, 0);
   delay(20);
 
-  switchStats = NOMEETING;
+  // switchStats = NOMEETING;
 }
 
 void configureRF()
@@ -97,8 +105,23 @@ void configureRF()
   radio.printDetails();
 }
 
+void setLightValues(Light light, int override = -1){
+  if(override == -1) {
+    analogWrite(red, light.red);
+    analogWrite(green, light.green);
+    analogWrite(blue, light.blue);
+    return;
+  }
+  analogWrite(red, override);
+  analogWrite(green, override);
+  analogWrite(blue, override);
+}
+
 void loop(void)
 {
+  Light light;
+  setLightValues(light, 0);
+
   // if there is data ready
   if (radio.available())
   {
@@ -108,10 +131,11 @@ void loop(void)
      * NOTE: stop listening and send ack payload back when necessary
      */
 
-    decideSwitchMode(payload);
+
+    light = decideSwitchMode(payload, light);
     delay(1000);
   }
-  runLightShow();
+  runLightShow(light);
 }
 
 String getPayload()
@@ -173,7 +197,7 @@ String getPayload()
   return finalMessage;
 }
 
-void decideSwitchMode(String jsonString)
+Light decideSwitchMode(String jsonString, Light light)
 {
   DynamicJsonDocument doc(350);
   char *jsonChar = const_cast<char *>(jsonString.c_str());
@@ -187,34 +211,65 @@ void decideSwitchMode(String jsonString)
     return;
   }
 
-  const int noMeetRed = doc["noMeeting"]["red"];
-  const int micRed = doc["mic"]["red"];
+  if (doc != NULL)
+  {
 
-  printf("nomeet: %i, mic: %i; camera: %s\n\r", noMeetRed, micRed, doc["camera"]);
+    light.red = doc["red"];
+    light.green = doc["green"];
+    light.blue = doc["blue"];
+    light.variation = doc["variation"];
+    // printf("decideswitch - red: %i, green: %i; blue: %i; variation:%i\n\r", light.red, light.green, light.blue, light.variation);
+    
+  }
 
-  // if (jsonString == "green")
-  // {
-  //   printf("decideSwitchMode in green: %s\n\r", jsonString);
-  //   switchStats = MIC;
-  //   return;
-  // }
-
-  // if (jsonString == "off") {
-  //   printf("decideSwitchMode off: %s\n\r", jsonString);
-  //   switchStats = NOMEETING;
-  //   return;
-  // }
+  return light;
 }
 
-void runLightShow()
+void runLightShow(Light light)
 {
-  switch (switchStats)
+  if(light.variation == 0){
+    // printf("lightshow off - red: %i, green: %i; blue: %i; variation:%i\n\r", light.red, light.green, light.blue, light.variation);
+    setLightValues(light, 0);
+    return;
+  }
+
+  if (light.variation == SOLID)
   {
-  case MIC:
-    analogWrite(red, 255);
-    delay(1000);
-    analogWrite(red, 0);
-    delay(1000);
-    break;
+    // printf("lightshow solid - red: %i, green: %i; blue: %i; variation:%i\n\r", light.red, light.green, light.blue, light.variation);
+    setLightValues(light);
+    delay(2000);
+    return;
+  }
+
+  if (light.variation == PULSE)
+  {
+    setLightValues(light);
+    delay(2000);
+    setLightValues(light, 0);
+    delay(700);
+    return;
+  }
+
+  if (light.variation == HEARTBEAT)
+  {
+    setLightValues(light, 0);
+    delay(2000);
+    setLightValues(light);
+    delay(200);
+    setLightValues(light,0);
+    delay(200);
+    setLightValues(light);
+    delay(200);
+    setLightValues(light,0);
+    return;
+  }
+
+  if (light.variation == BLINK)
+  {
+    setLightValues(light);
+    delay(800);
+    setLightValues(light, 0);
+    delay(800);
+    return;
   }
 }

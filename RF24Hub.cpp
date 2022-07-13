@@ -188,8 +188,10 @@ string getPayload(){
       // Fetch the payload, and see if this was the last one.
       len = radio.getDynamicPayloadSize();
       radio.read(receive_payload, len);
-       // Spew it
-      printf("Got payload size=%i value=%s\n\r", len, receive_payload);
+
+	  receive_payload[len] = '\0';
+	  // Spew it
+	  printf("Got payload size=%i value=%s\n\r", len, receive_payload);
     }
 
     if (millis() - started_waiting_at > 2500) {
